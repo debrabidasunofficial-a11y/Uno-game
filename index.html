@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UNO Classic Web Game</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Canvas Confetti for Win Effect -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800;900&display=swap');
+        
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            user-select: none;
+            touch-action: manipulation;
+        }
+
+        /* Perspective and 3D effects for table */
+        .table-surface {
+            background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%);
+            box-shadow: inset 0 0 100px rgba(0,0,0,0.8);
+        }
+
+        /* UNO Card styling */
+        .uno-card {
+            aspect-ratio: 2.5 / 3.5;
+            transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, top 0.25s ease;
+            transform-style: preserve-3d;
+        }
+
+        .uno-card.playable {
+            cursor: pointer;
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.6), 0 0 30px rgba(234, 179, 8, 0.4);
+            animation: pulse-border 1.8s infinite alternate;
+        }
+
+        .uno-card.playable:hover {
+            transform: translateY(-16px) scale(1.08);
+            z-index: 40 !important;
+        }
+
+        @keyframes pulse-border {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(-6px); }
+        }
+
+        /* Card Colors */
+        .bg-uno-red { background: linear-gradient(135deg, #ef4444, #dc2626); }
+        .bg-uno-yellow { background: linear-gradient(135deg, #eab308, #ca8a04); color: #1e293b; }
+        .bg-uno-green { background: linear-gradient(135deg, #22c55e, #16a34a); }
+        .bg-uno-blue { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+        .bg-uno-wild { background: conic-gradient(from 45deg, #ef4444 0% 25%, #3b82f6 25% 50%, #22c55e 50% 75%, #eab308 75% 100%); }
+        .bg-uno-back { background: radial-gradient(circle, #334155 0%, #0f172a 100%); border: 2px solid #475569; }
+
+        .card-oval {
+            transform: rotate(-25deg);
+            background: white;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Custom Scrollbar for Hand */
+        .hand-scroll::-webkit-scrollbar {
+            height: 6px;
+        }
+        .hand-scroll::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.5);
+            border-radius: 10px;
+        }
+        .hand-scroll::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 10px;
+        }
+
+        /* Direction Spinner Animation */
+        .rotate-cw { animation: spin-cw 12s linear infinite; }
+        .rotate-ccw { animation: spin-ccw 12s linear infinite; }
+
+        @keyframes spin-cw { 100% { transform: rotate(360deg); } }
+        @keyframes spin-ccw { 100% { transform: rotate(-360deg); } }
+
+        /* Toast Popup Notification */
+        .toast-enter {
+            animation: toast-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+        @keyframes toast-in {
+            0% { opacity: 0; transform: translateY(-20px) scale(0.8); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col justify-between select-none">
+
+    <!-- Top Navigation Header -->
+    <header class="w-full bg-slate-900/80 backdrop-blur-md border-b border-slate-800 px-4 py-2.5 flex items-center justify-between z-30">
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-red-600 via-yellow-500 to-blue-600 flex items-center justify-center shadow-lg transform -rotate-6">
+                <span class="font-black text-xl italic text-white tracking-tighter drop-shadow-md">UNO</span>
+            </div>
+            <div>
+                <h1 class="font-bold text-base leading-tight tracking-wide">UNO Classic</h1>
+                <p id="match-info" class="text-xs text-slate-400">1 Player vs <span id="opponent-count-text">3 AI</span></p>
+            </div>
+        </div>
+
+        <!-- Controls & Score -->
+        <div class="flex items-center space-x-3">
+            <div class="hidden sm:flex items-center bg-slate-800/80 border border-slate-700/60 rounded-lg px-3 py-1.5 space-x-3 text-xs">
+                <div><span class="text-slate-400">Your Score:</span> <span id="player-score" class="font-bold text-yellow-400">0</span></div>
+            </div>
+            <button id="btn-settings" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors">
+                <i class="fa-solid fa-gear"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Game Table -->
+    <main class="relative flex-1 w-full table-surface flex flex-col justify-between overflow-hidden p-2 sm:p-4">
+        
+        <!-- Status Toast Banner -->
+        <div id="toast-container" class="absolute top-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none flex flex-col items-center space-y-2">
+            <div id="status-toast" class="hidden toast-enter bg-slate-800/90 text-white border border-slate-700 px-5 py-2 rounded-full shadow-2xl flex items-center space-x-2 text-sm sm:text-base font-semibold">
+                <i id="toast-icon" class="fa-solid fa-circle-info text-blue-400"></i>
+                <span id="toast-message">Game Started!</span>
+            </div>
+        </div>
+
+        <!-- Direction Indicator Ring (Centered Background) -->
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none opacity-15">
+            <div id="direction-ring" class="w-72 h-72 sm:w-96 sm:h-96 border-4 border-dashed border-white rounded-full flex items-center justify-center rotate-cw">
+                <i class="fa-solid fa-arrows-rotate text-8xl text-white"></i>
+            </div>
+        </div>
+
+        <!-- AI Opponents Container -->
+        <div id="opponents-container" class="w-full flex justify-around items-start z-10 pt-1 sm:pt-2 px-2">
+            <!-- Dynamically populated AI seats -->
+        </div>
+
+        <!-- Play Center Area (Deck & Discard Pile) -->
+        <div class="my-auto flex items-center justify-center space-x-6 sm:space-x-10 z-20 relative">
+            
+            <!-- Draw Deck Stack -->
+            <div class="flex flex-col items-center">
+                <div id="draw-deck" class="relative group cursor-pointer">
+                    <!-- Fake Card Stack Depth -->
+                    <div class="absolute top-1.5 left-1.5 w-20 h-28 sm:w-24 sm:h-36 rounded-xl bg-slate-800 border border-slate-700 shadow-md"></div>
+                    <div class="absolute top-0.75 left-0.75 w-20 h-28 sm:w-24 sm:h-36 rounded-xl bg-slate-800 border border-slate-700 shadow-md"></div>
+                    
+                    <!-- Top Deck Card -->
+                    <div class="relative w-20 h-28 sm:w-24 sm:h-36 rounded-xl bg-uno-back flex flex-col items-center justify-center shadow-xl border-2 border-slate-600 transition-transform group-hover:-translate-y-1">
+                        <div class="w-12 h-16 sm:w-16 sm:h-22 rounded-full bg-red-600 flex items-center justify-center transform -rotate-12 shadow-inner border border-yellow-400">
+                            <span class="font-black italic text-lg sm:text-xl text-yellow-300 tracking-tighter">UNO</span>
+                        </div>
+                        <span id="deck-count" class="absolute -bottom-2 bg-slate-900 border border-slate-700 text-slate-300 font-mono text-xs px-2 py-0.5 rounded-full font-bold">54</span>
+                    </div>
+                </div>
+                <button id="btn-draw" class="mt-3 px-3 py-1 sm:px-4 sm:py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-semibold shadow-lg transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed">
+                    Draw Card
+                </button>
+            </div>
+
+            <!-- Discard Pile -->
+            <div class="flex flex-col items-center">
+                <div id="discard-pile" class="relative w-20 h-28 sm:w-24 sm:h-36">
+                    <!-- Discard cards rendered here dynamically -->
+                </div>
+                <div class="mt-3 flex items-center space-x-1.5 bg-slate-900/80 px-3 py-1 rounded-full border border-slate-700">
+                    <span class="text-xs text-slate-400">Active Color:</span>
+                    <div id="active-color-indicator" class="w-3.5 h-3.5 rounded-full bg-red-500 border border-white/40 shadow-sm"></div>
+                    <span id="active-color-text" class="text-xs font-bold text-white capitalize">Red</span>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Human Player Area -->
+        <div class="w-full flex flex-col items-center z-20 pb-2">
+            
+            <!-- Controls Overlay (UNO Button, Turn Indicator) -->
+            <div class="w-full max-w-2xl flex items-center justify-between px-4 mb-2">
+                <div id="turn-badge" class="flex items-center space-x-2 bg-slate-800/90 border border-slate-700 px-3 py-1.5 rounded-xl shadow-md">
+                    <div id="turn-pulse" class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
+                    <span id="turn-text" class="text-xs sm:text-sm font-semibold">Your Turn</span>
+                </div>
+
+                <!-- Pass Button (Shown only when card drawn and unplayable) -->
+                <button id="btn-pass" class="hidden px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs sm:text-sm font-bold shadow-lg transition-all active:scale-95">
+                    Pass Turn <i class="fa-solid fa-forward ml-1"></i>
+                </button>
+
+                <!-- Call UNO Button -->
+                <button id="btn-uno" class="relative px-5 py-2 bg-gradient-to-r from-red-600 to-yellow-500 hover:from-red-500 hover:to-yellow-400 text-white font-black italic rounded-xl text-sm sm:text-base tracking-wider shadow-lg transform active:scale-90 transition-transform flex items-center space-x-1 border border-yellow-300/40">
+                    <i class="fa-solid fa-bullhorn text-xs"></i>
+                    <span>UNO!</span>
+                </button>
+            </div>
+
+            <!-- Player Hand Card Tray -->
+            <div class="w-full max-w-5xl flex justify-center">
+                <div id="player-hand" class="hand-scroll w-full flex items-center justify-start sm:justify-center overflow-x-auto min-h-[125px] sm:min-h-[160px] px-6 py-2">
+                    <!-- Cards rendered dynamically -->
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Color Picker Modal for Wild Cards -->
+    <div id="color-picker-modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-xs w-full text-center shadow-2xl">
+            <h3 class="text-lg font-bold text-white mb-1">Choose Wild Color</h3>
+            <p class="text-xs text-slate-400 mb-5">Select the active color for the next play</p>
+            
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <button data-color="red" class="color-select-btn h-20 rounded-xl bg-uno-red text-white font-bold text-lg shadow-lg hover:scale-105 transition-transform flex items-center justify-center">
+                    Red
+                </button>
+                <button data-color="yellow" class="color-select-btn h-20 rounded-xl bg-uno-yellow text-slate-900 font-bold text-lg shadow-lg hover:scale-105 transition-transform flex items-center justify-center">
+                    Yellow
+                </button>
+                <button data-color="blue" class="color-select-btn h-20 rounded-xl bg-uno-blue text-white font-bold text-lg shadow-lg hover:scale-105 transition-transform flex items-center justify-center">
+                    Blue
+                </button>
+                <button data-color="green" class="color-select-btn h-20 rounded-xl bg-uno-green text-white font-bold text-lg shadow-lg hover:scale-105 transition-transform flex items-center justify-center">
+                    Green
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Over / Victory Modal -->
+    <div id="game-over-modal" class="hidden fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-8 max-w-sm w-full text-center shadow-2xl relative overflow-hidden">
+            
+            <div id="winner-icon-bg" class="w-20 h-20 mx-auto mb-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-4xl border border-emerald-500/30">
+                <i class="fa-solid fa-trophy"></i>
+            </div>
+
+            <h2 id="winner-title" class="text-2xl font-black text-white mb-1">Player Won!</h2>
+            <p id="winner-subtitle" class="text-xs text-slate-400 mb-6">Cleared all cards first!</p>
+
+            <!-- Round Score Breakdown -->
+            <div class="bg-slate-950/60 rounded-xl p-4 border border-slate-800/80 mb-6">
+                <div class="flex justify-between items-center text-xs text-slate-400 mb-2">
+                    <span>Round Points Earned:</span>
+                    <span id="round-score" class="font-bold text-yellow-400 text-sm">0</span>
+                </div>
+                <div class="flex justify-between items-center text-xs text-slate-400">
+                    <span>Total Match Score:</span>
+                    <span id="total-score" class="font-bold text-emerald-400 text-sm">0</span>
+                </div>
+            </div>
+
+            <button id="btn-play-again" class="w-full py-3 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95">
+                Play Next Round
+            </button>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-xs w-full text-center shadow-2xl">
+            <h3 class="text-lg font-bold text-white mb-4">Game Settings</h3>
+            
+            <div class="text-left mb-6">
+                <label class="block text-xs font-semibold text-slate-400 mb-2">Number of AI Opponents:</label>
+                <div class="grid grid-cols-3 gap-2">
+                    <button data-opponents="1" class="opponent-btn py-2 rounded-lg border border-slate-700 bg-slate-800 text-sm font-bold text-slate-300 hover:bg-slate-700">1 AI</button>
+                    <button data-opponents="2" class="opponent-btn py-2 rounded-lg border border-slate-700 bg-slate-800 text-sm font-bold text-slate-300 hover:bg-slate-700">2 AI</button>
+                    <button data-opponents="3" class="opponent-btn py-2 rounded-lg border border-indigo-600 bg-indigo-600/20 text-sm font-bold text-indigo-300">3 AI</button>
+                </div>
+            </div>
+
+            <div class="flex space-x-2">
+                <button id="btn-close-settings" class="flex-1 py-2.5 rounded-xl border border-slate-700 text-slate-300 font-semibold text-xs hover:bg-slate-800">Cancel</button>
+                <button id="btn-apply-settings" class="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs">Apply & Restart</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript Logic -->
+    <script>
+        /**
+         * UNO Game State & Constants
+         */
+        const COLORS = ['red', 'yellow', 'blue', 'green'];
+        const VALUES = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'skip', 'reverse', 'draw2'];
+        const WILD_TYPES = ['wild', 'draw4'];
+
+        let deck = [];
+        let discardPile = [];
+        let players = []; // Array of Player Objects { id, name, hand, isAI, calledUno }
+        let currentTurnIndex = 0;
+        let direction = 1; // 1: Clockwise, -1: Counter-Clockwise
+        let activeColor = null;
+        let pendingWildCard = null;
+        let drawnCardThisTurn = false;
+        let aiOpponentCount = 3;
+        let playerScore = 0;
+        let isProcessingTurn = false;
+
+        /**
+         * Card Rendering Helpers
+         */
+        function createCardSvgIcon(value) {
+            switch(value) {
+                case 'skip':
+                    return `<i class="fa-solid fa-ban"></i>`;
+                case 'reverse':
+                    return `<i class="fa-solid fa-arrow-right-arrow-left"></i>`;
+                case 'draw2':
+                    return `<span class="font-extrabold text-sm sm:text-base">+2</span>`;
+                case 'wild':
+                    return `<i class="fa-solid fa-palette text-sm sm:text-base"></i>`;
+                case 'draw4':
+                    return `<span class="font-extrabold text-xs sm:text-sm">+4</span>`;
+                default:
+                    return `<span class="font-extrabold">${value}</span>`;
+            }
+        }
+
+        function buildCardHtml(card, isSelectable = false, isHand = false) {
+            let bgClass = `bg-uno-${card.color}`;
+            if (card.type === 'wild' || card.type === 'draw4') {
+                bgClass = 'bg-uno-wild';
+            }
+
+            const iconHtml = createCardSvgIcon(card.value);
+            const selectableClass = isSelectable ? 'playable' : '';
+
+            return `
+                <div class="uno-card ${bgClass} ${selectableClass} relative w-16 h-24 sm:w-20 sm:h-28 rounded-xl p-1 sm:p-1.5 flex flex-col justify-between shadow-md border border-white/20 select-none shrink-0" data-id="${card.id}">
+                    <!-- Top Corner Index -->
+                    <div class="flex items-center space-x-0.5 text-xs sm:text-sm font-bold leading-none pl-0.5 pt-0.5">
+                        ${iconHtml}
+                    </div>
+
+                    <!-- Center Oval Emblem -->
+                    <div class="card-oval w-full h-10 sm:h-12 rounded-full flex items-center justify-center self-center my-auto">
+                        <span class="text-slate-900 font-extrabold text-sm sm:text-lg transform rotate-0">
+                            ${iconHtml}
+                        </span>
+                    </div>
+
+                    <!-- Bottom Corner Index (Inverted) -->
+                    <div class="flex items-center space-x-0.5 text-xs sm:text-sm font-bold leading-none pr-0.5 pb-0.5 rotate-180 self-end">
+                        ${iconHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        /**
+         * Game Deck Construction & Shuffling
+         */
+        function generateDeck() {
+            const newDeck = [];
+            let cardId = 1;
+
+            COLORS.forEach(color => {
+                // One 0 card per color
+                newDeck.push({ id: cardId++, color, value: '0', type: 'number', points: 0 });
+
+                // Two 1-9 cards per color
+                for (let i = 1; i <= 9; i++) {
+                    newDeck.push({ id: cardId++, color, value: `${i}`, type: 'number', points: i });
+                    newDeck.push({ id: cardId++, color, value: `${i}`, type: 'number', points: i });
+                }
+
+                // Action cards (2 per color)
+                ['skip', 'reverse', 'draw2'].forEach(action => {
+                    newDeck.push({ id: cardId++, color, value: action, type: 'action', points: 20 });
+                    newDeck.push({ id: cardId++, color, value: action, type: 'action', points: 20 });
+                });
+            });
+
+            // Wild cards (4 of each)
+            for (let i = 0; i < 4; i++) {
+                newDeck.push({ id: cardId++, color: 'wild', value: 'wild', type: 'wild', points: 50 });
+                newDeck.push({ id: cardId++, color: 'wild', value: 'draw4', type: 'draw4', points: 50 });
+            }
+
+            return shuffle(newDeck);
+        }
+
+        function shuffle(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+
+        /**
+         * Core Game Initialization
+         */
+        function initGame() {
+            deck = generateDeck();
+            discardPile = [];
+            direction = 1;
+            currentTurnIndex = 0;
+            drawnCardThisTurn = false;
+            isProcessingTurn = false;
+            updateDirectionUI();
+
+            // Setup Players
+            players = [
+                { id: 0, name: 'You', hand: [], isAI: false, calledUno: false }
+            ];
+
+            for (let i = 1; i <= aiOpponentCount; i++) {
+                players.push({
+                    id: i,
+                    name: `AI Bot ${i}`,
+                    hand: [],
+                    isAI: true,
+                    calledUno: false
+                });
+            }
+
+            // Deal 7 cards to each player
+            players.forEach(player => {
+                player.hand = deck.splice(0, 7);
+            });
+
+            // Flip top non-wild card for initial discard pile
+            let firstCard = deck.pop();
+            while (firstCard.type === 'wild' || firstCard.type === 'draw4') {
+                deck.unshift(firstCard);
+                firstCard = deck.pop();
+            }
+
+            discardPile.push(firstCard);
+            activeColor = firstCard.color;
+
+            renderOpponents();
+            renderDiscardPile();
+            renderPlayerHand();
+            updateTurnUI();
+            showToast(`Game started! Top card is ${activeColor.toUpperCase()} ${firstCard.value}`);
+        }
+
+        /**
+         * UI Rendering Functions
+         */
+        function renderOpponents() {
+            const container = document.getElementById('opponents-container');
+            container.innerHTML = '';
+
+            const aiPlayers = players.filter(p => p.isAI);
+            
+            aiPlayers.forEach(ai => {
+                const isCurrentTurn = players[currentTurnIndex].id === ai.id;
+                const activeRingClass = isCurrentTurn ? 'ring-2 ring-emerald-400 bg-slate-800' : 'bg-slate-900/80';
+                
+                const cardCount = ai.hand.length;
+                const unoBadge = cardCount === 1 ? `<span class="ml-1.5 px-1.5 py-0.5 text-[10px] bg-red-600 text-white font-black italic rounded animate-bounce">UNO</span>` : '';
+
+                const el = document.createElement('div');
+                el.className = `flex flex-col items-center p-2 rounded-xl border border-slate-800 transition-all ${activeRingClass}`;
+                el.innerHTML = `
+                    <div class="flex items-center space-x-2 mb-1.5">
+                        <div class="w-7 h-7 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center text-xs text-slate-300 font-bold">
+                            <i class="fa-solid fa-robot"></i>
+                        </div>
+                        <span class="text-xs font-semibold text-slate-200">${ai.name}</span>
+                        ${unoBadge}
+                    </div>
+
+                    <!-- Fan Card Stack Preview -->
+                    <div class="relative w-12 h-14 flex items-center justify-center">
+                        <div class="absolute w-9 h-12 bg-uno-back rounded-md border border-slate-600 transform -rotate-12 shadow"></div>
+                        <div class="absolute w-9 h-12 bg-uno-back rounded-md border border-slate-600 transform rotate-6 shadow"></div>
+                        <div class="relative w-9 h-12 bg-uno-back rounded-md border border-slate-600 flex items-center justify-center font-bold text-xs text-white shadow-md">
+                            ${cardCount}
+                        </div>
+                    </div>
+                `;
+                container.appendChild(el);
+            });
+        }
+
+        function renderDiscardPile() {
+            const container = document.getElementById('discard-pile');
+            container.innerHTML = '';
+
+            const topCard = getTopDiscard();
+            if (!topCard) return;
+
+            // Show last 2 cards stacked visually
+            if (discardPile.length > 1) {
+                const prevCard = discardPile[discardPile.length - 2];
+                const prevHtml = buildCardHtml(prevCard);
+                const prevWrapper = document.createElement('div');
+                prevWrapper.className = 'absolute inset-0 transform -rotate-6 opacity-60 scale-95';
+                prevWrapper.innerHTML = prevHtml;
+                container.appendChild(prevWrapper);
+            }
+
+            const topHtml = buildCardHtml(topCard);
+            const topWrapper = document.createElement('div');
+            topWrapper.className = 'absolute inset-0 transform rotate-3 shadow-2xl';
+            topWrapper.innerHTML = topHtml;
+            container.appendChild(topWrapper);
+
+            // Update Active Color Badge
+            const colorBadge = document.getElementById('active-color-indicator');
+            const colorText = document.getElementById('active-color-text');
+            
+            colorText.innerText = activeColor;
+            colorBadge.className = 'w-3.5 h-3.5 rounded-full border border-white/40 shadow-sm ';
+            
+            switch(activeColor) {
+                case 'red': colorBadge.classList.add('bg-red-500'); break;
+                case 'yellow': colorBadge.classList.add('bg-yellow-400'); break;
+                case 'blue': colorBadge.classList.add('bg-blue-500'); break;
+                case 'green': colorBadge.classList.add('bg-green-500'); break;
+                default: colorBadge.classList.add('bg-slate-400'); break;
+            }
+
+            document.getElementById('deck-count').innerText = deck.length;
+        }
+
+        function renderPlayerHand() {
+            const container = document.getElementById('player-hand');
+            container.innerHTML = '';
+
+            const human = players[0];
+            const isHumanTurn = currentTurnIndex === 0 && !isProcessingTurn;
+
+            human.hand.forEach(card => {
+                const isPlayable = isHumanTurn && isValidPlay(card);
+                const cardWrapper = document.createElement('div');
+                cardWrapper.className = 'inline-block transition-transform duration-200 -ml-3 first:ml-0';
+                cardWrapper.innerHTML = buildCardHtml(card, isPlayable, true);
+
+                if (isPlayable) {
+                    const cardEl = cardWrapper.firstElementChild;
+                    cardEl.addEventListener('click', () => handleHumanPlayCard(card));
+                }
+
+                container.appendChild(cardWrapper);
+            });
+
+            // Update Pass turn button visibility
+            const passBtn = document.getElementById('btn-pass');
+            if (isHumanTurn && drawnCardThisTurn) {
+                passBtn.classList.remove('hidden');
+            } else {
+                passBtn.classList.add('hidden');
+            }
+
+            // Disable draw button if not human turn
+            const drawBtn = document.getElementById('btn-draw');
+            drawBtn.disabled = !isHumanTurn;
+        }
+
+        function updateTurnUI() {
+            const isHumanTurn = currentTurnIndex === 0;
+            const turnBadge = document.getElementById('turn-badge');
+            const turnText = document.getElementById('turn-text');
+            const turnPulse = document.getElementById('turn-pulse');
+
+            if (isHumanTurn) {
+                turnBadge.className = 'flex items-center space-x-2 bg-emerald-950/80 border border-emerald-600/60 px-3 py-1.5 rounded-xl shadow-md text-emerald-300';
+                turnPulse.className = 'w-3 h-3 rounded-full bg-emerald-400 animate-pulse';
+                turnText.innerText = "Your Turn";
+            } else {
+                const activeAI = players[currentTurnIndex];
+                turnBadge.className = 'flex items-center space-x-2 bg-slate-800/90 border border-slate-700 px-3 py-1.5 rounded-xl shadow-md text-slate-300';
+                turnPulse.className = 'w-3 h-3 rounded-full bg-amber-400 animate-pulse';
+                turnText.innerText = `${activeAI.name}'s Turn`;
+            }
+
+            renderOpponents();
+            renderPlayerHand();
+        }
+
+        function updateDirectionUI() {
+            const ring = document.getElementById('direction-ring');
+            if (direction === 1) {
+                ring.className = 'w-72 h-72 sm:w-96 sm:h-96 border-4 border-dashed border-white rounded-full flex items-center justify-center rotate-cw';
+            } else {
+                ring.className = 'w-72 h-72 sm:w-96 sm:h-96 border-4 border-dashed border-white rounded-full flex items-center justify-center rotate-ccw';
+            }
+        }
+
+        function showToast(message, icon = 'fa-circle-info') {
+            const toast = document.getElementById('status-toast');
+            const msgEl = document.getElementById('toast-message');
+            const iconEl = document.getElementById('toast-icon');
+
+            msgEl.innerText = message;
+            iconEl.className = `fa-solid ${icon}`;
+
+            toast.classList.remove('hidden');
+            clearTimeout(window.toastTimer);
+            window.toastTimer = setTimeout(() => {
+                toast.classList.add('hidden');
+            }, 3000);
+        }
+
+        /**
+         * Uno Rules Logic
+         */
+        function getTopDiscard() {
+            return discardPile[discardPile.length - 1];
+        }
+
+        function isValidPlay(card) {
+            const top = getTopDiscard();
+            if (card.type === 'wild' || card.type === 'draw4') return true;
+            if (card.color === activeColor) return true;
+            if (card.value === top.value) return true;
+            return false;
+        }
+
+        function checkDeckReshuffle() {
+            if (deck.length === 0) {
+                if (discardPile.length <= 1) return;
+                const top = discardPile.pop();
+                deck = shuffle(discardPile);
+                discardPile = [top];
+                showToast("Reshuffling discard pile into draw deck!", "fa-arrows-rotate");
+                renderDiscardPile();
+            }
+        }
+
+        function drawCardsForPlayer(playerIndex, count) {
+            const drawn = [];
+            for (let i = 0; i < count; i++) {
+                checkDeckReshuffle();
+                if (deck.length > 0) {
+                    const card = deck.pop();
+                    players[playerIndex].hand.push(card);
+                    drawn.push(card);
+                }
+            }
+            // Reset UNO flag if drawing cards
+            if (players[playerIndex].hand.length > 1) {
+                players[playerIndex].calledUno = false;
+            }
+            return drawn;
+        }
+
+        function advanceTurn(step = 1) {
+            const total = players.length;
+            currentTurnIndex = (currentTurnIndex + (step * direction) + (total * 100)) % total;
+            drawnCardThisTurn = false;
+            updateTurnUI();
+
+            // Trigger AI play if current player is AI
+            if (players[currentTurnIndex].isAI) {
+                setTimeout(handleAITurn, 1200);
+            }
+        }
+
+        /**
+         * Human Interaction Logic
+         */
+        function handleHumanPlayCard(card) {
+            if (currentTurnIndex !== 0 || isProcessingTurn) return;
+
+            // UNO Penalty Check if player has 2 cards, plays 1, but forgot to press UNO button
+            const player = players[0];
+            if (player.hand.length === 2 && !player.calledUno) {
+                showToast("Penalty! Forgotten UNO call! +2 Cards", "fa-triangle-exclamation");
+                drawCardsForPlayer(0, 2);
+            }
+
+            if (card.type === 'wild' || card.type === 'draw4') {
+                pendingWildCard = card;
+                document.getElementById('color-picker-modal').classList.remove('hidden');
+            } else {
+                executePlayCard(0, card, card.color);
+            }
+        }
+
+        function executePlayCard(playerIndex, card, chosenColor) {
+            isProcessingTurn = true;
+            const player = players[playerIndex];
+
+            // Remove card from hand
+            player.hand = player.hand.filter(c => c.id !== card.id);
+            discardPile.push(card);
+            activeColor = chosenColor;
+
+            showToast(`${player.name} played ${card.value.toUpperCase()} (${chosenColor.toUpperCase()})`);
+
+            renderDiscardPile();
+            renderPlayerHand();
+
+            // Check Win Condition
+            if (player.hand.length === 0) {
+                handleGameOver(playerIndex);
+                return;
+            }
+
+            // Handle Action Card Effects
+            let skipStep = 1;
+
+            if (card.value === 'skip') {
+                skipStep = 2;
+                showToast(`${getNextPlayerName(1)} skipped!`, 'fa-ban');
+            } else if (card.value === 'reverse') {
+                if (players.length === 2) {
+                    skipStep = 2; // In 2 player mode reverse acts as skip
+                } else {
+                    direction *= -1;
+                    updateDirectionUI();
+                    showToast(`Direction Reversed!`, 'fa-rotate');
+                }
+            } else if (card.value === 'draw2') {
+                const targetIdx = getNextPlayerIndex(1);
+                drawCardsForPlayer(targetIdx, 2);
+                showToast(`${players[targetIdx].name} drew 2 cards & skipped!`, 'fa-plus');
+                skipStep = 2;
+            } else if (card.value === 'draw4') {
+                const targetIdx = getNextPlayerIndex(1);
+                drawCardsForPlayer(targetIdx, 4);
+                showToast(`${players[targetIdx].name} drew 4 cards & skipped!`, 'fa-skull');
+                skipStep = 2;
+            }
+
+            setTimeout(() => {
+                isProcessingTurn = false;
+                advanceTurn(skipStep);
+            }, 600);
+        }
+
+        function getNextPlayerIndex(step = 1) {
+            const total = players.length;
+            return (currentTurnIndex + (step * direction) + (total * 100)) % total;
+        }
+
+        function getNextPlayerName(step = 1) {
+            return players[getNextPlayerIndex(step)].name;
+        }
+
+        // Draw button click handler
+        document.getElementById('btn-draw').addEventListener('click', () => {
+            if (currentTurnIndex !== 0 || drawnCardThisTurn || isProcessingTurn) return;
+
+            const drawn = drawCardsForPlayer(0, 1);
+            drawnCardThisTurn = true;
+            
+            if (drawn.length > 0) {
+                const drawnCard = drawn[0];
+                showToast(`You drew a card (${drawnCard.value})`);
+
+                if (!isValidPlay(drawnCard)) {
+                    // Auto-pass if drawn card cannot be played
+                    setTimeout(() => {
+                        advanceTurn(1);
+                    }, 1000);
+                } else {
+                    renderPlayerHand();
+                }
+            }
+        });
+
+        // Pass button handler
+        document.getElementById('btn-pass').addEventListener('click', () => {
+            if (currentTurnIndex !== 0 || !drawnCardThisTurn) return;
+            advanceTurn(1);
+        });
+
+        // Call UNO button handler
+        document.getElementById('btn-uno').addEventListener('click', () => {
+            const player = players[0];
+            if (player.hand.length <= 2) {
+                player.calledUno = true;
+                showToast("You called UNO!", "fa-bullhorn");
+            } else {
+                showToast("You can only call UNO with 2 or 1 cards left!");
+            }
+        });
+
+        // Color selection handler for Wild cards
+        document.querySelectorAll('.color-select-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const selectedColor = e.currentTarget.getAttribute('data-color');
+                document.getElementById('color-picker-modal').classList.add('hidden');
+                if (pendingWildCard) {
+                    const card = pendingWildCard;
+                    pendingWildCard = null;
+                    executePlayCard(0, card, selectedColor);
+                }
+            });
+        });
+
+        /**
+         * AI Logic
+         */
+        function handleAITurn() {
+            if (currentTurnIndex === 0) return;
+
+            const ai = players[currentTurnIndex];
+            const playableCards = ai.hand.filter(c => isValidPlay(c));
+
+            // AI UNO call check
+            if (ai.hand.length === 2) {
+                ai.calledUno = true;
+                showToast(`${ai.name} called UNO!`, 'fa-bullhorn');
+            }
+
+            if (playableCards.length > 0) {
+                // Smart Card Selection Strategy:
+                // 1. Prefer action/matching color cards over Wild cards
+                // 2. Play highest point card first
+                playableCards.sort((a, b) => b.points - a.points);
+                
+                let chosenCard = playableCards.find(c => c.type !== 'wild' && c.type !== 'draw4');
+                if (!chosenCard) chosenCard = playableCards[0];
+
+                let chosenColor = chosenCard.color;
+
+                // Pick smart color if Wild card
+                if (chosenCard.type === 'wild' || chosenCard.type === 'draw4') {
+                    const colorCounts = { red: 0, yellow: 0, blue: 0, green: 0 };
+                    ai.hand.forEach(c => {
+                        if (c.color !== 'wild') colorCounts[c.color]++;
+                    });
+                    chosenColor = Object.keys(colorCounts).reduce((a, b) => colorCounts[a] > colorCounts[b] ? a : b);
+                }
+
+                executePlayCard(currentTurnIndex, chosenCard, chosenColor);
+
+            } else {
+                // AI draws card if no valid move
+                showToast(`${ai.name} drew a card`);
+                const drawn = drawCardsForPlayer(currentTurnIndex, 1);
+                
+                if (drawn.length > 0 && isValidPlay(drawn[0])) {
+                    // AI plays drawn card immediately if playable
+                    setTimeout(() => {
+                        let drawnCard = drawn[0];
+                        let chosenColor = drawnCard.color;
+                        if (drawnCard.type === 'wild' || drawnCard.type === 'draw4') {
+                            chosenColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+                        }
+                        executePlayCard(currentTurnIndex, drawnCard, chosenColor);
+                    }, 800);
+                } else {
+                    setTimeout(() => advanceTurn(1), 800);
+                }
+            }
+        }
+
+        /**
+         * Game Over & Scoring
+         */
+        function handleGameOver(winnerIndex) {
+            const winner = players[winnerIndex];
+            
+            // Calculate total round score from other players' hands
+            let roundPoints = 0;
+            players.forEach((p, idx) => {
+                if (idx !== winnerIndex) {
+                    p.hand.forEach(card => {
+                        roundPoints += card.points;
+                    });
+                }
+            });
+
+            if (winnerIndex === 0) {
+                playerScore += roundPoints;
+                document.getElementById('player-score').innerText = playerScore;
+            }
+
+            // Update Winner Modal Text
+            document.getElementById('winner-title').innerText = `${winner.name} Wins!`;
+            document.getElementById('winner-subtitle').innerText = winnerIndex === 0 ? "Congratulations! You cleared all cards first!" : "Better luck next round!";
+            document.getElementById('round-score').innerText = `+${roundPoints}`;
+            document.getElementById('total-score').innerText = playerScore;
+
+            const iconBg = document.getElementById('winner-icon-bg');
+            if (winnerIndex === 0) {
+                iconBg.className = 'w-20 h-20 mx-auto mb-4 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-4xl border border-emerald-500/30';
+                confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+            } else {
+                iconBg.className = 'w-20 h-20 mx-auto mb-4 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center text-4xl border border-red-500/30';
+            }
+
+            document.getElementById('game-over-modal').classList.remove('hidden');
+        }
+
+        document.getElementById('btn-play-again').addEventListener('click', () => {
+            document.getElementById('game-over-modal').classList.add('hidden');
+            initGame();
+        });
+
+        /**
+         * Settings Modal Handling
+         */
+        document.getElementById('btn-settings').addEventListener('click', () => {
+            document.getElementById('settings-modal').classList.remove('hidden');
+        });
+
+        document.getElementById('btn-close-settings').addEventListener('click', () => {
+            document.getElementById('settings-modal').classList.add('hidden');
+        });
+
+        document.querySelectorAll('.opponent-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                document.querySelectorAll('.opponent-btn').forEach(b => {
+                    b.className = 'opponent-btn py-2 rounded-lg border border-slate-700 bg-slate-800 text-sm font-bold text-slate-300 hover:bg-slate-700';
+                });
+                e.currentTarget.className = 'opponent-btn py-2 rounded-lg border border-indigo-600 bg-indigo-600/20 text-sm font-bold text-indigo-300';
+                aiOpponentCount = parseInt(e.currentTarget.getAttribute('data-opponents'));
+            });
+        });
+
+        document.getElementById('btn-apply-settings').addEventListener('click', () => {
+            document.getElementById('opponent-count-text').innerText = `${aiOpponentCount} AI`;
+            document.getElementById('settings-modal').classList.add('hidden');
+            playerScore = 0;
+            document.getElementById('player-score').innerText = '0';
+            initGame();
+        });
+
+        // Initialize Game on Load
+        window.onload = () => {
+            initGame();
+        };
+    </script>
+</body>
+</html>
